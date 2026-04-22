@@ -28,6 +28,9 @@ app.use('/api/hotels', require('./src/routes/hotel'));
 
 // ✅ Stats route
 app.use('/api/stats', require('./src/routes/stats'));
+app.get('/', (req, res) => {
+  res.json({ message: "API RED PRODUCT fonctionne 🚀" });
+});
 
 
 const PORT = process.env.PORT || 5000;
