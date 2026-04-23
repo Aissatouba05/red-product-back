@@ -26,9 +26,10 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  nom:      { type: String, required: true }, // ← ajouté
+  nom:      { type: String, required: true },
   email:    { type: String, unique: true, required: true },
   password: { type: String, required: true },
+  photo:    { type: String, default: null }, // ← ajouté pour la photo de profil
   resetToken: String,
   resetTokenExpiry: Date
 });
