@@ -179,9 +179,16 @@ const profileStorage = new CloudinaryStorage({
 });
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
+// ✅ Transporter Nodemailer — IPv4 forcé pour corriger ENETUNREACH sur Render
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  family: 4, // ← force IPv4
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  }
 });
 
 // ✅ Middleware vérification token + blacklist
@@ -189,10 +196,8 @@ const verifyToken = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Token manquant' });
   try {
-    // Vérifier si le token est blacklisté (déconnecté)
     const blacklisted = await BlacklistToken.findOne({ token });
     if (blacklisted) return res.status(401).json({ error: 'Token invalide, veuillez vous reconnecter' });
-
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch {
@@ -277,7 +282,6 @@ router.post('/reset-password/:token', async (req, res) => {
 router.put('/photo', verifyToken, uploadPhoto.single('photo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Aucune image fournie' });
-    // L'image est maintenant une URL Cloudinary permanente
     const photoUrl = req.file.path;
     const user = await User.findByIdAndUpdate(
       req.user.id,
@@ -290,7 +294,7 @@ router.put('/photo', verifyToken, uploadPhoto.single('photo'), async (req, res) 
   }
 });
 
-// ✅ GET /me — retourner aussi la photo
+// ✅ GET /me
 router.get('/me', verifyToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
