@@ -179,7 +179,7 @@ const profileStorage = new CloudinaryStorage({
 });
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
-✅ Transporter Nodemailer — IPv4 forcé pour corriger ENETUNREACH sur Render
+// ✅ Transporter Nodemailer — IPv4 forcé pour corriger ENETUNREACH sur Render
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
@@ -190,17 +190,6 @@ const transporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS
   }
 });
-
-// const transporter = nodemailer.createTransport({
-//   host: 'smtp.gmail.com',
-//   port: 465,
-//   secure: true, // ← SSL sur 465
-//   family: 4,
-//   auth: {
-//     user: process.env.EMAIL_USER,
-//     pass: process.env.EMAIL_PASS
-//   }
-// });
 
 // ✅ Middleware vérification token + blacklist
 const verifyToken = async (req, res, next) => {
