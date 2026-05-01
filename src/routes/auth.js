@@ -6,30 +6,40 @@
 // const jwt = require('jsonwebtoken');
 // const nodemailer = require('nodemailer');
 // const multer = require('multer');
-// const path = require('path');
 // const User = require('../models/User');
 // const BlacklistToken = require('../models/BlacklistToken');
 // const router = express.Router();
 
-// // ✅ Config Multer pour les photos de profil
-// const storage = multer.diskStorage({
-//   destination: './uploads/profiles/',
-//   filename: (req, file, cb) => {
-//     cb(null, 'profile_' + Date.now() + path.extname(file.originalname));
-//   }
-// });
-// const uploadPhoto = multer({
-//   storage,
-//   limits: { fileSize: 2 * 1024 * 1024 }, // 2MB max
-//   fileFilter: (req, file, cb) => {
-//     if (file.mimetype.startsWith('image/')) cb(null, true);
-//     else cb(new Error('Fichier non supporté'));
-//   }
+// // ✅ Config Cloudinary
+// const cloudinary = require('cloudinary').v2;
+// const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
+// cloudinary.config({
+//   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+//   api_key:    process.env.CLOUDINARY_API_KEY,
+//   api_secret: process.env.CLOUDINARY_API_SECRET,
 // });
 
+// // ✅ Config Multer + Cloudinary pour les photos de profil
+// const profileStorage = new CloudinaryStorage({
+//   cloudinary,
+//   params: {
+//     folder: 'red-product/profiles',
+//     allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+//   },
+// });
+// const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
+
+// // ✅ Transporter Nodemailer — IPv4 forcé pour corriger ENETUNREACH sur Render
 // const transporter = nodemailer.createTransport({
-//   service: 'gmail',
-//   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+//   host: 'smtp.gmail.com',
+//   port: 587,
+//   secure: false,
+//   family: 4, // ← force IPv4
+//   auth: {
+//     user: process.env.EMAIL_USER,
+//     pass: process.env.EMAIL_PASS
+//   }
 // });
 
 // // ✅ Middleware vérification token + blacklist
@@ -37,10 +47,8 @@
 //   const token = req.headers.authorization?.split(' ')[1];
 //   if (!token) return res.status(401).json({ error: 'Token manquant' });
 //   try {
-//     // Vérifier si le token est blacklisté (déconnecté)
 //     const blacklisted = await BlacklistToken.findOne({ token });
 //     if (blacklisted) return res.status(401).json({ error: 'Token invalide, veuillez vous reconnecter' });
-
 //     req.user = jwt.verify(token, process.env.JWT_SECRET);
 //     next();
 //   } catch {
@@ -125,7 +133,7 @@
 // router.put('/photo', verifyToken, uploadPhoto.single('photo'), async (req, res) => {
 //   try {
 //     if (!req.file) return res.status(400).json({ error: 'Aucune image fournie' });
-//     const photoUrl = `/uploads/profiles/${req.file.filename}`;
+//     const photoUrl = req.file.path;
 //     const user = await User.findByIdAndUpdate(
 //       req.user.id,
 //       { photo: photoUrl },
@@ -137,7 +145,7 @@
 //   }
 // });
 
-// // ✅ GET /me — retourner aussi la photo
+// // ✅ GET /me
 // router.get('/me', verifyToken, async (req, res) => {
 //   try {
 //     const user = await User.findById(req.user.id).select('-password');
@@ -148,7 +156,6 @@
 // });
 
 // module.exports = { router, verifyToken };
-
 
 const express = require('express');
 const bcrypt = require('bcryptjs');
@@ -179,16 +186,9 @@ const profileStorage = new CloudinaryStorage({
 });
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
-// ✅ Transporter Nodemailer — IPv4 forcé pour corriger ENETUNREACH sur Render
 const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  family: 4, // ← force IPv4
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+  service: 'gmail',
+  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
 // ✅ Middleware vérification token + blacklist
@@ -229,7 +229,7 @@ router.post('/login', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// ✅ Déconnexion — ajoute le token à la blacklist
+// ✅ Déconnexion
 router.post('/deconnexion', verifyToken, async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
@@ -278,6 +278,16 @@ router.post('/reset-password/:token', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
+// ✅ GET /me
+router.get('/me', verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ✅ PUT — changer la photo de profil
 router.put('/photo', verifyToken, uploadPhoto.single('photo'), async (req, res) => {
   try {
@@ -294,11 +304,28 @@ router.put('/photo', verifyToken, uploadPhoto.single('photo'), async (req, res) 
   }
 });
 
-// ✅ GET /me
-router.get('/me', verifyToken, async (req, res) => {
+// ✅ PUT — modifier le profil (nom, email, mot de passe)
+router.put('/profil', verifyToken, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
-    res.json(user);
+    const { nom, email, password } = req.body;
+    const updateData = {};
+
+    if (nom) updateData.nom = nom;
+    if (email) updateData.email = email;
+
+    if (password && password.length >= 6) {
+      updateData.password = await bcrypt.hash(password, 12);
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: updateData },
+      { new: true }
+    ).select('-password');
+
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+    res.json({ message: 'Profil mis à jour ✅', user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
