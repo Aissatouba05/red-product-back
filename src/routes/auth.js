@@ -275,6 +275,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
 const multer = require('multer');
 const User = require('../models/User');
 const BlacklistToken = require('../models/BlacklistToken');
@@ -290,6 +291,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// ✅ Config Multer + Cloudinary pour les photos de profil
 const profileStorage = new CloudinaryStorage({
   cloudinary,
   params: {
@@ -299,27 +301,15 @@ const profileStorage = new CloudinaryStorage({
 });
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
-// ✅ Fonction envoi email via Brevo API (sans SDK)
-async function sendEmail({ to, subject, html }) {
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': process.env.BREVO_API_KEY,
-    },
-    body: JSON.stringify({
-      sender: { email: 'aissatouba0501@gmail.com', name: 'RED PRODUCT' },
-      to: [{ email: to }],
-      subject,
-      htmlContent: html,
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.message || 'Erreur envoi email');
+const transporter = nodemailer.createTransport({
+  host: 'smtp-relay.brevo.com',
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.BREVO_SMTP_USER,
+    pass: process.env.BREVO_SMTP_PASS
   }
-}
+});
 
 // ✅ Middleware vérification token + blacklist
 const verifyToken = async (req, res, next) => {
@@ -335,26 +325,30 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-// ✅ Register
+// ✅ Register — avec activation par email
 router.post('/register', async (req, res) => {
   try {
     const { email, password, nom } = req.body;
 
+    // Vérifier si email déjà utilisé
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ error: 'Cet email est déjà utilisé.' });
 
+    // Générer token d'activation
     const activationToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
     const user = new User({
       email, password, nom,
       isActive: false,
       activationToken,
-      activationExpiry: Date.now() + 24 * 3600000
+      activationExpiry: Date.now() + 24 * 3600000 // 24h
     });
     await user.save();
 
+    // Envoyer email d'activation
     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
-    await sendEmail({
+    await transporter.sendMail({
+      from: `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`,
       to: email,
       subject: 'RED PRODUCT — Activez votre compte',
       html: `
@@ -374,7 +368,7 @@ router.post('/register', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// ✅ Login
+// ✅ Login — vérifie l'activation
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -382,6 +376,7 @@ router.post('/login', async (req, res) => {
     if (!user || !await bcrypt.compare(password, user.password)) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
+    // Vérifier si le compte est activé
     if (!user.isActive) {
       return res.status(403).json({ error: 'Compte non activé. Vérifiez votre email.' });
     }
@@ -413,22 +408,13 @@ router.post('/forgot-password', async (req, res) => {
     user.resetTokenExpiry = Date.now() + 3600000;
     await user.save();
 
-    await sendEmail({
+    const mailOptions = {
       to: email,
       subject: 'RedProduct - Reset Password',
-      html: `
-        <div style="font-family: sans-serif; max-width: 500px; margin: auto;">
-          <h2 style="color: #333">Réinitialisation de mot de passe</h2>
-          <p>Cliquez sur le bouton ci-dessous pour réinitialiser votre mot de passe :</p>
-          <a href="${process.env.FRONTEND_URL}/new-password.html?token=${token}"
-            style="display:inline-block; background:#333; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; margin-top:12px;">
-            Réinitialiser mon mot de passe
-          </a>
-          <p style="color:#999; font-size:12px; margin-top:16px;">Ce lien expire dans 1 heure.</p>
-        </div>
-      `
-    });
-
+      text: `Cliquez sur ce lien pour réinitialiser votre mot de passe:\n\n${process.env.FRONTEND_URL}/new-password.html?token=${token}`
+    };
+    mailOptions.from = `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`;
+    await transporter.sendMail(mailOptions);
     res.json({ message: 'Email envoyé ✅' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -475,22 +461,27 @@ router.put('/photo', verifyToken, uploadPhoto.single('photo'), async (req, res) 
   }
 });
 
-// ✅ PUT — modifier le profil
+// ✅ PUT — modifier le profil (nom, email, mot de passe)
 router.put('/profil', verifyToken, async (req, res) => {
   try {
     const { nom, email, password } = req.body;
     const updateData = {};
+
     if (nom) updateData.nom = nom;
     if (email) updateData.email = email;
+
     if (password && password.length >= 6) {
       updateData.password = await bcrypt.hash(password, 12);
     }
+
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { $set: updateData },
       { new: true }
     ).select('-password');
+
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
     res.json({ message: 'Profil mis à jour ✅', user });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -500,10 +491,16 @@ router.put('/profil', verifyToken, async (req, res) => {
 // ✅ GET — activer le compte
 router.get('/activate', async (req, res) => {
   try {
-    const { token } = req.query;
+    const token = req.query.token;
     if (!token) return res.status(400).json({ error: 'Token manquant' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(400).json({ error: 'Lien invalide ou expiré.' });
+    }
+
     const user = await User.findOne({
       email: decoded.email,
       activationToken: token,
@@ -536,7 +533,8 @@ router.post('/resend-activation', async (req, res) => {
     await user.save();
 
     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
-    await sendEmail({
+    await transporter.sendMail({
+      from: `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`,
       to: email,
       subject: 'RED PRODUCT — Activez votre compte',
       html: `
