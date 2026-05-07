@@ -47,24 +47,59 @@
 //   }
 // };
 
-// // ✅ Register
+// // ✅ Register — avec activation par email
 // router.post('/register', async (req, res) => {
 //   try {
 //     const { email, password, nom } = req.body;
-//     const user = new User({ email, password, nom });
+
+//     // Vérifier si email déjà utilisé
+//     const existing = await User.findOne({ email });
+//     if (existing) return res.status(400).json({ error: 'Cet email est déjà utilisé.' });
+
+//     // Générer token d'activation
+//     const activationToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+//     const user = new User({
+//       email, password, nom,
+//       isActive: false,
+//       activationToken,
+//       activationExpiry: Date.now() + 24 * 3600000 // 24h
+//     });
 //     await user.save();
-//     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-//     res.json({ token, user: { id: user._id, email, nom } });
+
+//     // Envoyer email d'activation
+//     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
+//     await transporter.sendMail({
+//       to: email,
+//       subject: 'RED PRODUCT — Activez votre compte',
+//       html: `
+//         <div style="font-family: sans-serif; max-width: 500px; margin: auto;">
+//           <h2 style="color: #333">Bienvenue sur RED PRODUCT, ${nom} !</h2>
+//           <p>Cliquez sur le bouton ci-dessous pour activer votre compte :</p>
+//           <a href="${activationLink}"
+//             style="display:inline-block; background:#333; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; margin-top:12px;">
+//             Activer mon compte
+//           </a>
+//           <p style="color:#999; font-size:12px; margin-top:16px;">Ce lien expire dans 24 heures.</p>
+//         </div>
+//       `
+//     });
+
+//     res.json({ message: 'Inscription réussie ! Vérifiez votre email pour activer votre compte.' });
 //   } catch (err) { res.status(400).json({ error: err.message }); }
 // });
 
-// // ✅ Login
+// // ✅ Login — vérifie l'activation
 // router.post('/login', async (req, res) => {
 //   try {
 //     const { email, password } = req.body;
 //     const user = await User.findOne({ email });
 //     if (!user || !await bcrypt.compare(password, user.password)) {
 //       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
+//     }
+//     // Vérifier si le compte est activé
+//     if (!user.isActive) {
+//       return res.status(403).json({ error: 'Compte non activé. Vérifiez votre email.' });
 //     }
 //     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
 //     res.json({ token, user: { id: user._id, email, nom: user.nom } });
@@ -173,8 +208,68 @@
 //   }
 // });
 
-// module.exports = { router, verifyToken };
+// // ✅ GET — activer le compte
+// router.get('/activate', async (req, res) => {
+//   try {
+//     const { token } = req.query;
+//     if (!token) return res.status(400).json({ error: 'Token manquant' });
 
+//     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+//     const user = await User.findOne({
+//       email: decoded.email,
+//       activationToken: token,
+//       activationExpiry: { $gt: Date.now() }
+//     });
+
+//     if (!user) return res.status(400).json({ error: 'Lien invalide ou expiré.' });
+
+//     user.isActive = true;
+//     user.activationToken = undefined;
+//     user.activationExpiry = undefined;
+//     await user.save();
+
+//     res.json({ message: 'Compte activé avec succès ✅' });
+//   } catch (err) {
+//     res.status(400).json({ error: 'Lien invalide ou expiré.' });
+//   }
+// });
+
+// // ✅ POST — renvoyer email d'activation
+// router.post('/resend-activation', async (req, res) => {
+//   try {
+//     const { email } = req.body;
+//     const user = await User.findOne({ email, isActive: false });
+//     if (!user) return res.status(404).json({ error: 'Compte introuvable ou déjà activé.' });
+
+//     const activationToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '24h' });
+//     user.activationToken  = activationToken;
+//     user.activationExpiry = Date.now() + 24 * 3600000;
+//     await user.save();
+
+//     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
+//     await transporter.sendMail({
+//       to: email,
+//       subject: 'RED PRODUCT — Activez votre compte',
+//       html: `
+//         <div style="font-family: sans-serif; max-width: 500px; margin: auto;">
+//           <h2 style="color: #333">Activation de votre compte RED PRODUCT</h2>
+//           <p>Cliquez sur le bouton ci-dessous pour activer votre compte :</p>
+//           <a href="${activationLink}"
+//             style="display:inline-block; background:#333; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; margin-top:12px;">
+//             Activer mon compte
+//           </a>
+//           <p style="color:#999; font-size:12px; margin-top:16px;">Ce lien expire dans 24 heures.</p>
+//         </div>
+//       `
+//     });
+
+//     res.json({ message: 'Email de confirmation renvoyé ✅' });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
+// module.exports = { router, verifyToken };
 
 
 
@@ -208,7 +303,10 @@ const profileStorage = new CloudinaryStorage({
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true,
+  family: 4, // ← forcer IPv4 (fix Render)
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
