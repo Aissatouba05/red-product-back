@@ -272,11 +272,9 @@
 // module.exports = { router, verifyToken };
 
 
-
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const multer = require('multer');
 const User = require('../models/User');
 const BlacklistToken = require('../models/BlacklistToken');
@@ -292,7 +290,6 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ✅ Config Multer + Cloudinary pour les photos de profil
 const profileStorage = new CloudinaryStorage({
   cloudinary,
   params: {
@@ -302,15 +299,20 @@ const profileStorage = new CloudinaryStorage({
 });
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
-const transporter = nodemailer.createTransport({
-  host: 'smtp-relay.brevo.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.BREVO_SMTP_USER,
-    pass: process.env.BREVO_SMTP_PASS
-  }
-});
+// ✅ Config Brevo API (remplace nodemailer SMTP)
+const Brevo = require('@getbrevo/brevo');
+const brevoClient = Brevo.ApiClient.instance;
+brevoClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
+const emailApi = new Brevo.TransactionalEmailsApi();
+
+async function sendEmail({ to, subject, html }) {
+  await emailApi.sendTransacEmail({
+    sender: { email: 'aissatouba0501@gmail.com', name: 'RED PRODUCT' },
+    to: [{ email: to }],
+    subject,
+    htmlContent: html,
+  });
+}
 
 // ✅ Middleware vérification token + blacklist
 const verifyToken = async (req, res, next) => {
@@ -326,30 +328,26 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-// ✅ Register — avec activation par email
+// ✅ Register
 router.post('/register', async (req, res) => {
   try {
     const { email, password, nom } = req.body;
 
-    // Vérifier si email déjà utilisé
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ error: 'Cet email est déjà utilisé.' });
 
-    // Générer token d'activation
     const activationToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
     const user = new User({
       email, password, nom,
       isActive: false,
       activationToken,
-      activationExpiry: Date.now() + 24 * 3600000 // 24h
+      activationExpiry: Date.now() + 24 * 3600000
     });
     await user.save();
 
-    // Envoyer email d'activation
     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
-    await transporter.sendMail({
-      from: `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`,
+    await sendEmail({
       to: email,
       subject: 'RED PRODUCT — Activez votre compte',
       html: `
@@ -369,7 +367,7 @@ router.post('/register', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// ✅ Login — vérifie l'activation
+// ✅ Login
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -377,7 +375,6 @@ router.post('/login', async (req, res) => {
     if (!user || !await bcrypt.compare(password, user.password)) {
       return res.status(401).json({ error: 'Email ou mot de passe incorrect' });
     }
-    // Vérifier si le compte est activé
     if (!user.isActive) {
       return res.status(403).json({ error: 'Compte non activé. Vérifiez votre email.' });
     }
@@ -409,13 +406,13 @@ router.post('/forgot-password', async (req, res) => {
     user.resetTokenExpiry = Date.now() + 3600000;
     await user.save();
 
-    const mailOptions = {
+    await sendEmail({
       to: email,
       subject: 'RedProduct - Reset Password',
-      text: `Cliquez sur ce lien pour réinitialiser votre mot de passe:\n\n${process.env.FRONTEND_URL}/new-password.html?token=${token}`
-    };
-    mailOptions.from = `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`;
-    await transporter.sendMail(mailOptions);
+      html: `<p>Cliquez sur ce lien pour réinitialiser votre mot de passe :</p>
+             <a href="${process.env.FRONTEND_URL}/new-password.html?token=${token}">Réinitialiser</a>`
+    });
+
     res.json({ message: 'Email envoyé ✅' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -462,27 +459,22 @@ router.put('/photo', verifyToken, uploadPhoto.single('photo'), async (req, res) 
   }
 });
 
-// ✅ PUT — modifier le profil (nom, email, mot de passe)
+// ✅ PUT — modifier le profil
 router.put('/profil', verifyToken, async (req, res) => {
   try {
     const { nom, email, password } = req.body;
     const updateData = {};
-
     if (nom) updateData.nom = nom;
     if (email) updateData.email = email;
-
     if (password && password.length >= 6) {
       updateData.password = await bcrypt.hash(password, 12);
     }
-
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { $set: updateData },
       { new: true }
     ).select('-password');
-
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
-
     res.json({ message: 'Profil mis à jour ✅', user });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -528,8 +520,7 @@ router.post('/resend-activation', async (req, res) => {
     await user.save();
 
     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
-    await transporter.sendMail({
-      from: `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`,
+    await sendEmail({
       to: email,
       subject: 'RED PRODUCT — Activez votre compte',
       html: `
