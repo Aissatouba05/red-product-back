@@ -303,12 +303,13 @@ const profileStorage = new CloudinaryStorage({
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
 const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
+  host: 'smtp-relay.brevo.com',
   port: 587,
   secure: false,
-  family: 4,
-  tls: { rejectUnauthorized: false },
-  auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+  auth: {
+    user: process.env.BREVO_SMTP_USER,
+    pass: process.env.BREVO_SMTP_PASS
+  }
 });
 
 // ✅ Middleware vérification token + blacklist
@@ -348,6 +349,7 @@ router.post('/register', async (req, res) => {
     // Envoyer email d'activation
     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
     await transporter.sendMail({
+      from: `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`,
       to: email,
       subject: 'RED PRODUCT — Activez votre compte',
       html: `
@@ -412,6 +414,7 @@ router.post('/forgot-password', async (req, res) => {
       subject: 'RedProduct - Reset Password',
       text: `Cliquez sur ce lien pour réinitialiser votre mot de passe:\n\n${process.env.FRONTEND_URL}/new-password.html?token=${token}`
     };
+    mailOptions.from = `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`;
     await transporter.sendMail(mailOptions);
     res.json({ message: 'Email envoyé ✅' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -526,6 +529,7 @@ router.post('/resend-activation', async (req, res) => {
 
     const activationLink = `${process.env.FRONTEND_URL}/activation.html?token=${activationToken}`;
     await transporter.sendMail({
+      from: `RED PRODUCT <${process.env.BREVO_SMTP_USER}>`,
       to: email,
       subject: 'RED PRODUCT — Activez votre compte',
       html: `
