@@ -304,9 +304,10 @@ const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 10
 
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 465,
-  secure: true,
-  family: 4, // ← forcer IPv4 (fix Render)
+  port: 587,
+  secure: false,
+  family: 4,
+  tls: { rejectUnauthorized: false },
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
