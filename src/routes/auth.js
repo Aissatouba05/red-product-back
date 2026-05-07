@@ -299,19 +299,26 @@ const profileStorage = new CloudinaryStorage({
 });
 const uploadPhoto = multer({ storage: profileStorage, limits: { fileSize: 2 * 1024 * 1024 } });
 
-// ✅ Config Brevo API (remplace nodemailer SMTP)
-const Brevo = require('@getbrevo/brevo');
-const brevoClient = Brevo.ApiClient.instance;
-brevoClient.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-const emailApi = new Brevo.TransactionalEmailsApi();
-
+// ✅ Fonction envoi email via Brevo API (sans SDK)
 async function sendEmail({ to, subject, html }) {
-  await emailApi.sendTransacEmail({
-    sender: { email: 'aissatouba0501@gmail.com', name: 'RED PRODUCT' },
-    to: [{ email: to }],
-    subject,
-    htmlContent: html,
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': process.env.BREVO_API_KEY,
+    },
+    body: JSON.stringify({
+      sender: { email: 'aissatouba0501@gmail.com', name: 'RED PRODUCT' },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
   });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Erreur envoi email');
+  }
 }
 
 // ✅ Middleware vérification token + blacklist
@@ -409,8 +416,17 @@ router.post('/forgot-password', async (req, res) => {
     await sendEmail({
       to: email,
       subject: 'RedProduct - Reset Password',
-      html: `<p>Cliquez sur ce lien pour réinitialiser votre mot de passe :</p>
-             <a href="${process.env.FRONTEND_URL}/new-password.html?token=${token}">Réinitialiser</a>`
+      html: `
+        <div style="font-family: sans-serif; max-width: 500px; margin: auto;">
+          <h2 style="color: #333">Réinitialisation de mot de passe</h2>
+          <p>Cliquez sur le bouton ci-dessous pour réinitialiser votre mot de passe :</p>
+          <a href="${process.env.FRONTEND_URL}/new-password.html?token=${token}"
+            style="display:inline-block; background:#333; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; margin-top:12px;">
+            Réinitialiser mon mot de passe
+          </a>
+          <p style="color:#999; font-size:12px; margin-top:16px;">Ce lien expire dans 1 heure.</p>
+        </div>
+      `
     });
 
     res.json({ message: 'Email envoyé ✅' });
